@@ -51,29 +51,39 @@ interface KanbanConfig {
 // ========================================
 
 const BOARD_NAME = "陌陌工作看板";
-const INJECT_PREFIX = "【KANBAN_BOARD】";
+const INJECT_PREFIX = "[KANBAN_BOARD]";
 const DEFAULT_DATA_FILE = "~/.openclaw/data/kanban.json";
 
 const SYSTEM_PROMPT_GUIDANCE = `
-【看板使用指南 - 陌陌工作看板】
+[KANBAN_BOARD_GUIDANCE]
 
-当你收到一个复杂任务时，使用看板工具将其分解为小步骤，逐步完成。
+## How to Use the Kanban Board
 
-使用方式：
-- 用 kanban_add <任务描述> 将任务分解为多个小步骤（一次加一个）
-- 用 kanban_list 查看当前所有步骤和进度
-- 用 kanban_do <步骤ID> 开始执行某个步骤
-- 用 kanban_done <步骤ID> 标记步骤完成
-- 用 kanban_reset 清除看板（任务全部完成或重新开始时）
+When you receive a complex task, use the kanban tools to break it down into smaller steps and execute them systematically.
 
-状态规则：
-- todo: 待处理
-- doing: 正在做
-- done: 已完成
+### Available Tools:
+- kanban_add <title> - Add a new step to the board
+- kanban_list - View all steps and current progress
+- kanban_do <task_id> - Mark a step as in-progress (doing)
+- kanban_done <task_id> - Mark a step as completed
+- kanban_delete <task_id> - Remove a step from the board
+- kanban_reset - Clear the entire board
 
-重要：每次只允许一个「doing」任务。开始新任务时旧任务会自动移回 todo。
+### Status Rules:
+- todo: Not started yet
+- doing: Currently executing
+- done: Completed
 
-看板状态会持续注入在上下文中，请随时参考当前进度。
+### Key Principles:
+1. When starting a complex task, FIRST define the step breakdown using kanban_add
+2. Only ONE task can be "doing" at a time. Starting a new task auto-moves the old one back to "todo"
+3. After each significant action, update the board (mark done, add new steps discovered, etc.)
+4. If a step turns out to be too complex, break it down into smaller steps immediately
+5. If circumstances change and steps need revision, adjust them (delete and re-add)
+
+The board state is continuously injected at the top of context. Always refer to it for current progress.
+
+[End of Kanban Board Guidance]
 `;
 
 // ========================================
@@ -273,7 +283,7 @@ class KanbanManager {
 
   getInjectContent(): string {
     if (this.data.tasks.length === 0) {
-      return `${INJECT_PREFIX}\n${BOARD_NAME} - 目前没有进行中的任务\n`;
+      return `${INJECT_PREFIX}\n${BOARD_NAME} - No active tasks\n`;
     }
 
     const lines: string[] = [`${INJECT_PREFIX}`];
@@ -285,7 +295,7 @@ class KanbanManager {
     const doneTasks = this.data.tasks.filter((t) => t.status === "done");
 
     if (doingTasks.length > 0) {
-      lines.push("🔵 正在做:");
+      lines.push("🔵 IN PROGRESS:");
       for (const task of doingTasks) {
         lines.push(`   [${task.id}] ${task.title}`);
       }
@@ -293,7 +303,7 @@ class KanbanManager {
     }
 
     if (todoTasks.length > 0) {
-      lines.push("📋 待处理:");
+      lines.push("📋 TODO:");
       for (const task of todoTasks) {
         lines.push(`   [${task.id}] ${task.title}`);
       }
@@ -301,7 +311,7 @@ class KanbanManager {
     }
 
     if (doneTasks.length > 0) {
-      lines.push(`✅ 已完成 (${doneTasks.length}):`);
+      lines.push(`✅ DONE (${doneTasks.length}):`);
       for (const task of doneTasks) {
         lines.push(`   [${task.id}] ${task.title}`);
       }
@@ -582,9 +592,9 @@ const momoKanbanPlugin = {
     // 注册 hooks：注入看板状态到上下文
     // ========================================
     if (config.injectEnabled) {
-      api.registerHook({
-        event: "before_prompt_build",
-        handler: (_event, data) => {
+      api.registerHook(
+        "before_prompt_build",
+        (_event, data) => {
           const boardContent = kanban.getInjectContent();
           const systemGuidance = kanban.getSystemPromptGuidance();
 
@@ -596,7 +606,8 @@ const momoKanbanPlugin = {
 
           return data;
         },
-      });
+        { name: "momo-kanban.inject", description: "注入看板状态到上下文" }
+      );
       api.logger.info("[momo-kanban] 上下文注入已启用");
     }
 
