@@ -1,0 +1,10 @@
+{
+  "name": "momo-kanban",
+  "version": "1.0.0",
+  "description": "陌陌的任务看板，帮助分解任务、逐步执行、持续追踪",
+  "type": "module",
+  "main": "index.ts",
+  "dependencies": {
+    "@sinclair/typebox": "^0.32.0"
+  }
+}

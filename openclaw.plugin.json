@@ -1,0 +1,41 @@
+{
+  "id": "momo-kanban",
+  "name": "陌陌看板",
+  "description": "陌陌的任务看板，帮助分解任务、逐步执行、持续追踪",
+  "version": "1.0.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dataFile": {
+        "type": "string",
+        "default": "~/.openclaw/data/kanban.json",
+        "description": "看板数据存储文件路径"
+      },
+      "injectEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "是否将看板状态注入到上下文"
+      },
+      "maxTasks": {
+        "type": "number",
+        "default": 20,
+        "description": "最大任务数量"
+      }
+    }
+  },
+  "uiHints": {
+    "dataFile": {
+      "label": "数据文件路径",
+      "placeholder": "~/.openclaw/data/kanban.json"
+    },
+    "injectEnabled": {
+      "label": "启用上下文注入",
+      "help": "开启后看板状态会持续显示在对话上下文中"
+    },
+    "maxTasks": {
+      "label": "最大任务数",
+      "help": "看板最多容纳的任务数量"
+    }
+  }
+}
