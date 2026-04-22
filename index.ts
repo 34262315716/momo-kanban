@@ -28,9 +28,11 @@ interface Task {
   id: string;
   title: string;
   status: TaskStatus;
+  scope: string;
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
+  blockedBy?: string[];
 }
 
 interface KanbanData {
@@ -39,6 +41,9 @@ interface KanbanData {
   boardName: string;
   lastUpdated: string;
 }
+
+/** 默认 scope */
+const DEFAULT_SCOPE = "main";
 
 interface KanbanConfig {
   dataFile: string;
@@ -92,24 +97,34 @@ const SYSTEM_PROMPT_GUIDANCE = `
 When you receive a complex task, use the kanban tools to break it down into smaller steps and execute them systematically.
 
 ### Available Tools:
-- kanban_add <title> - Add a new step to the board
-- kanban_list - View all steps and current progress
-- kanban_do <task_id> - Mark a step as in-progress (doing)
-- kanban_done <task_id> - Mark a step as completed
+- kanban_add <title> [scope] [blocked_by] - Add a new step (optional: scope for isolation, blocked_by for dependencies)
+- kanban_list [show_all] - View steps and progress (show_all=true to see all scopes)
+- kanban_do <task_id> - Mark a step as in-progress (checks dependencies first)
+- kanban_done <task_id> - Mark a step as completed (auto-reports unlocked downstream tasks)
 - kanban_delete <task_id> - Remove a step from the board
-- kanban_reset - Clear the entire board
+- kanban_reset [scope] - Clear the board (optional: only clear specific scope)
+
+### Scope (Session Isolation):
+- Each task belongs to a scope (default: "main")
+- Subagents should use their own scope to avoid conflicts
+- Use show_all=true in kanban_list to see all scopes at once
+
+### Dependencies:
+- Use blocked_by to specify task IDs that must complete first
+- Blocked tasks show a 🔒 indicator and cannot be started until dependencies are done
+- When a task completes, downstream tasks are automatically unlocked
 
 ### Status Rules:
 - todo: Not started yet
-- doing: Currently executing
+- doing: Currently executing (one per scope)
 - done: Completed
 
 ### Key Principles:
 1. When starting a complex task, FIRST define the step breakdown using kanban_add
-2. Only ONE task can be "doing" at a time. Starting a new task auto-moves the old one back to "todo"
-3. After each significant action, update the board (mark done, add new steps discovered, etc.)
-4. If a step turns out to be too complex, break it down into smaller steps immediately
-5. If circumstances change and steps need revision, adjust them (delete and re-add)
+2. Only ONE task can be "doing" per scope. Starting a new task auto-moves the old one back to "todo"
+3. Use blocked_by for tasks with clear ordering dependencies
+4. After each significant action, update the board (mark done, add new steps discovered, etc.)
+5. If a step turns out to be too complex, break it down into smaller steps immediately
 
 The board state is continuously injected at the top of context. Always refer to it for current progress.
 
@@ -228,19 +243,32 @@ class KanbanManager {
     return `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   }
 
-  addTask(title: string): { success: boolean; task?: Task; error?: string } {
-    if (this.data.tasks.length >= this.maxTasks) {
+  addTask(title: string, scope: string = DEFAULT_SCOPE, blockedBy?: string[]): { success: boolean; task?: Task; error?: string } {
+    const scopeTasks = this.data.tasks.filter((t) => t.scope === scope);
+    if (scopeTasks.length >= this.maxTasks) {
       return {
         success: false,
-        error: `任务数量已达上限（${this.maxTasks}个）`,
+        error: `该 scope(${scope}) 任务数量已达上限（${this.maxTasks}个）`,
       };
+    }
+
+    // 验证 blockedBy 的任务是否存在
+    if (blockedBy && blockedBy.length > 0) {
+      for (const depId of blockedBy) {
+        const depTask = this.data.tasks.find((t) => t.id === depId);
+        if (!depTask) {
+          return { success: false, error: `依赖任务不存在: ${depId}` };
+        }
+      }
     }
 
     const task: Task = {
       id: this.generateId(),
       title: title.trim(),
       status: "todo",
+      scope,
       createdAt: new Date().toISOString(),
+      ...(blockedBy && blockedBy.length > 0 ? { blockedBy } : {}),
     };
 
     this.data.tasks.push(task);
@@ -248,21 +276,49 @@ class KanbanManager {
     return { success: true, task };
   }
 
-  listTasks(): KanbanData {
-    return { ...this.data };
+  listTasks(scope?: string): KanbanData {
+    if (!scope) {
+      // 返回全部
+      return { ...this.data };
+    }
+    return {
+      ...this.data,
+      tasks: this.data.tasks.filter((t) => t.scope === scope),
+    };
   }
 
-  doTask(taskId: string): { success: boolean; task?: Task; error?: string } {
-    // 将当前 doing 的任务移回 todo
-    const currentDoing = this.data.tasks.find((t) => t.status === "doing");
-    if (currentDoing && currentDoing.id !== taskId) {
-      currentDoing.status = "todo";
-      delete currentDoing.startedAt;
-    }
-
+  doTask(taskId: string): { success: boolean; task?: Task; error?: string; blockedInfo?: string } {
     const task = this.data.tasks.find((t) => t.id === taskId);
     if (!task) {
       return { success: false, error: `找不到任务: ${taskId}` };
+    }
+
+    // 检查依赖是否完成
+    if (task.blockedBy && task.blockedBy.length > 0) {
+      const unfinished = task.blockedBy.filter((depId) => {
+        const dep = this.data.tasks.find((t) => t.id === depId);
+        return dep && dep.status !== "done";
+      });
+      if (unfinished.length > 0) {
+        const blockerNames = unfinished.map((id) => {
+          const dep = this.data.tasks.find((t) => t.id === id);
+          return dep ? `[${dep.id}] ${dep.title}` : id;
+        });
+        return {
+          success: false,
+          error: `任务被依赖阻塞`,
+          blockedInfo: `需要先完成:\n${blockerNames.map((n) => `  • ${n}`).join("\n")}`,
+        };
+      }
+    }
+
+    // 将同 scope 当前 doing 的任务移回 todo
+    const currentDoing = this.data.tasks.find(
+      (t) => t.status === "doing" && t.scope === task.scope && t.id !== taskId
+    );
+    if (currentDoing) {
+      currentDoing.status = "todo";
+      delete currentDoing.startedAt;
     }
 
     task.status = "doing";
@@ -272,7 +328,7 @@ class KanbanManager {
     return { success: true, task };
   }
 
-  doneTask(taskId: string): { success: boolean; task?: Task; error?: string } {
+  doneTask(taskId: string): { success: boolean; task?: Task; error?: string; unlockedTasks?: Task[] } {
     const task = this.data.tasks.find((t) => t.id === taskId);
     if (!task) {
       return { success: false, error: `找不到任务: ${taskId}` };
@@ -285,8 +341,22 @@ class KanbanManager {
       this.data.currentTaskId = undefined;
     }
 
+    // 检查是否解锁了下游任务
+    const unlockedTasks: Task[] = [];
+    for (const t of this.data.tasks) {
+      if (t.status !== "todo" || !t.blockedBy || !t.blockedBy.includes(taskId)) continue;
+      // 检查该任务的所有依赖是否都完成了
+      const allDepsComplete = t.blockedBy.every((depId) => {
+        const dep = this.data.tasks.find((d) => d.id === depId);
+        return dep && dep.status === "done";
+      });
+      if (allDepsComplete) {
+        unlockedTasks.push(t);
+      }
+    }
+
     this.save();
-    return { success: true, task };
+    return { success: true, task, unlockedTasks };
   }
 
   deleteTask(taskId: string): { success: boolean; error?: string } {
@@ -305,49 +375,93 @@ class KanbanManager {
     return { success: true };
   }
 
-  resetBoard(): { success: boolean } {
-    this.data = this.createEmptyBoard();
+  resetBoard(scope?: string): { success: boolean; removedCount: number } {
+    if (!scope) {
+      // 重置全部
+      const count = this.data.tasks.length;
+      this.data = this.createEmptyBoard();
+      this.save();
+      return { success: true, removedCount: count };
+    }
+    // 只重置指定 scope
+    const before = this.data.tasks.length;
+    this.data.tasks = this.data.tasks.filter((t) => t.scope !== scope);
+    const removedCount = before - this.data.tasks.length;
+    if (this.data.currentTaskId) {
+      const current = this.data.tasks.find((t) => t.id === this.data.currentTaskId);
+      if (!current) this.data.currentTaskId = undefined;
+    }
     this.save();
-    return { success: true };
+    return { success: true, removedCount };
   }
 
-  getInjectContent(): string {
-    if (this.data.tasks.length === 0) {
+  getInjectContent(scope?: string): string {
+    const tasks = scope
+      ? this.data.tasks.filter((t) => t.scope === scope)
+      : this.data.tasks;
+
+    if (tasks.length === 0) {
       return `${INJECT_PREFIX}\n${BOARD_NAME} - No active tasks\n`;
     }
 
     const lines: string[] = [`${INJECT_PREFIX}`];
-    lines.push(BOARD_NAME);
+    lines.push(scope ? `${BOARD_NAME} [scope: ${scope}]` : BOARD_NAME);
     lines.push("");
 
-    const todoTasks = this.data.tasks.filter((t) => t.status === "todo");
-    const doingTasks = this.data.tasks.filter((t) => t.status === "doing");
-    const doneTasks = this.data.tasks.filter((t) => t.status === "done");
+    // 按 scope 分组显示
+    const scopes = [...new Set(tasks.map((t) => t.scope))];
+    const multiScope = scopes.length > 1;
 
-    if (doingTasks.length > 0) {
-      lines.push("🔵 IN PROGRESS:");
-      for (const task of doingTasks) {
-        lines.push(`   [${task.id}] ${task.title}`);
+    for (const s of scopes) {
+      const scopeTasks = tasks.filter((t) => t.scope === s);
+      if (multiScope) {
+        lines.push(`📁 Scope: ${s}`);
+        lines.push("");
       }
-      lines.push("");
-    }
 
-    if (todoTasks.length > 0) {
-      lines.push("📋 TODO:");
-      for (const task of todoTasks) {
-        lines.push(`   [${task.id}] ${task.title}`);
-      }
-      lines.push("");
-    }
+      const todoTasks = scopeTasks.filter((t) => t.status === "todo");
+      const doingTasks = scopeTasks.filter((t) => t.status === "doing");
+      const doneTasks = scopeTasks.filter((t) => t.status === "done");
 
-    if (doneTasks.length > 0) {
-      lines.push(`✅ DONE (${doneTasks.length}):`);
-      for (const task of doneTasks) {
-        lines.push(`   [${task.id}] ${task.title}`);
+      if (doingTasks.length > 0) {
+        lines.push("🔵 IN PROGRESS:");
+        for (const task of doingTasks) {
+          lines.push(`   [${task.id}] ${task.title}`);
+        }
+        lines.push("");
       }
+
+      if (todoTasks.length > 0) {
+        lines.push("📋 TODO:");
+        for (const task of todoTasks) {
+          const depInfo = this.getDepStatusString(task);
+          lines.push(`   [${task.id}] ${task.title}${depInfo}`);
+        }
+        lines.push("");
+      }
+
+      if (doneTasks.length > 0) {
+        lines.push(`✅ DONE (${doneTasks.length}):`);
+        for (const task of doneTasks) {
+          lines.push(`   [${task.id}] ${task.title}`);
+        }
+      }
+
+      if (multiScope) lines.push("");
     }
 
     return lines.join("\n");
+  }
+
+  /** 获取任务的依赖状态字符串 */
+  private getDepStatusString(task: Task): string {
+    if (!task.blockedBy || task.blockedBy.length === 0) return "";
+    const unfinished = task.blockedBy.filter((depId) => {
+      const dep = this.data.tasks.find((t) => t.id === depId);
+      return dep && dep.status !== "done";
+    });
+    if (unfinished.length === 0) return " ✅解锁";
+    return ` 🔒阻塞(等待 ${unfinished.length} 个前置任务)`;
   }
 
   getSystemPromptGuidance(): string {
@@ -564,11 +678,17 @@ const momoKanbanPlugin = {
       name: "kanban_add",
       label: "看板添加任务",
       description:
-        "将一个大任务分解为小步骤，添加到看板上。参数 title 是任务/步骤的标题描述。",
+        "将一个大任务分解为小步骤，添加到看板上。可选 scope 用于会话隔离，blocked_by 用于任务依赖。",
       parameters: Type.Object({
         title: Type.String({
           description: "任务/步骤的标题描述",
         }),
+        scope: Type.Optional(Type.String({
+          description: "任务所属 scope，用于会话/Agent 隔离，默认 main",
+        })),
+        blocked_by: Type.Optional(Type.Array(Type.String(), {
+          description: "前置任务 ID 列表，这些任务完成后才能开始本任务",
+        })),
       }),
       async execute(_toolCallId, params) {
         const title = params?.title;
@@ -583,7 +703,9 @@ const momoKanbanPlugin = {
           };
         }
 
-        const result = kanban.addTask(title);
+        const scope = (params?.scope as string) || DEFAULT_SCOPE;
+        const blockedBy = params?.blocked_by as string[] | undefined;
+        const result = kanban.addTask(title, scope, blockedBy);
         if (!result.success) {
           return {
             content: [
@@ -595,11 +717,14 @@ const momoKanbanPlugin = {
           };
         }
 
+        const depInfo = blockedBy && blockedBy.length > 0
+          ? ` (依赖: ${blockedBy.join(", ")})`
+          : "";
         return {
           content: [
             {
               type: "text" as const,
-              text: `✅ 已添加步骤: ${result.task?.title}\n\n${kanban.getInjectContent()}`,
+              text: `✅ 已添加步骤: ${result.task?.title}${depInfo}\n\n${kanban.getInjectContent(scope)}`,
             },
           ],
         };
@@ -612,16 +737,25 @@ const momoKanbanPlugin = {
     api.registerTool({
       name: "kanban_list",
       label: "看板列表",
-      description: "查看当前看板上的所有任务及其状态。",
-      parameters: Type.Object({}),
-      async execute(_toolCallId) {
-        const board = kanban.listTasks();
+      description: "查看当前看板上的任务及其状态。show_all=true 查看所有 scope。",
+      parameters: Type.Object({
+        scope: Type.Optional(Type.String({
+          description: "只查看指定 scope 的任务，默认 main",
+        })),
+        show_all: Type.Optional(Type.Boolean({
+          description: "是否查看所有 scope 的任务",
+        })),
+      }),
+      async execute(_toolCallId, params) {
+        const showAll = params?.show_all === true;
+        const scope = showAll ? undefined : ((params?.scope as string) || DEFAULT_SCOPE);
+        const board = kanban.listTasks(scope);
         if (board.tasks.length === 0) {
           return {
             content: [
               {
                 type: "text" as const,
-                text: "📋 看板上目前没有任务",
+                text: showAll ? "📋 看板上目前没有任务" : `📋 scope "${scope}" 下没有任务`,
               },
             ],
           };
@@ -630,7 +764,7 @@ const momoKanbanPlugin = {
           content: [
             {
               type: "text" as const,
-              text: kanban.getInjectContent(),
+              text: kanban.getInjectContent(scope),
             },
           ],
         };
@@ -664,11 +798,14 @@ const momoKanbanPlugin = {
 
         const result = kanban.doTask(taskId);
         if (!result.success) {
+          const msg = result.blockedInfo
+            ? `🔒 任务被依赖阻塞\n\n${result.blockedInfo}`
+            : `操作失败: ${result.error}`;
           return {
             content: [
               {
                 type: "text" as const,
-                text: `操作失败: ${result.error}`,
+                text: msg,
               },
             ],
           };
@@ -681,7 +818,7 @@ const momoKanbanPlugin = {
           content: [
             {
               type: "text" as const,
-              text: `🔵 开始执行: ${result.task?.title}\n\n${kanban.getInjectContent()}`,
+              text: `🔵 开始执行: ${result.task?.title}\n\n${kanban.getInjectContent(result.task?.scope)}`,
             },
           ],
         };
@@ -725,11 +862,18 @@ const momoKanbanPlugin = {
           };
         }
 
+        let msg = `✅ 已完成: ${result.task?.title}`;
+        if (result.unlockedTasks && result.unlockedTasks.length > 0) {
+          const unlocked = result.unlockedTasks.map((t) => `  • [${t.id}] ${t.title}`).join("\n");
+          msg += `\n\n🔓 以下任务已解锁：\n${unlocked}`;
+        }
+        msg += `\n\n${kanban.getInjectContent(result.task?.scope)}`;
+
         return {
           content: [
             {
               type: "text" as const,
-              text: `✅ 已完成: ${result.task?.title}\n\n${kanban.getInjectContent()}`,
+              text: msg,
             },
           ],
         };
@@ -777,7 +921,7 @@ const momoKanbanPlugin = {
           content: [
             {
               type: "text" as const,
-              text: `🗑️ 已删除任务\n\n${kanban.getInjectContent()}`,
+              text: `🗑️ 已删除任务\n\n${kanban.getInjectContent(DEFAULT_SCOPE)}`,
             },
           ],
         };
@@ -790,16 +934,22 @@ const momoKanbanPlugin = {
     api.registerTool({
       name: "kanban_reset",
       label: "看板重置",
-      description: "清除看板上的所有任务。",
-      parameters: Type.Object({}),
-      async execute(_toolCallId) {
-        kanban.resetBoard();
+      description: "清除看板上的任务。可选 scope 只清除指定 scope。",
+      parameters: Type.Object({
+        scope: Type.Optional(Type.String({
+          description: "只清除指定 scope 的任务，不填则清除全部",
+        })),
+      }),
+      async execute(_toolCallId, params) {
+        const scope = params?.scope as string | undefined;
+        const result = kanban.resetBoard(scope);
         tracker.resetForNewTask();
+        const scopeInfo = scope ? ` (scope: ${scope}, 删除 ${result.removedCount} 个)` : "";
         return {
           content: [
             {
               type: "text" as const,
-              text: "🔄 看板已重置\n\n📋 看板上目前没有任务",
+              text: `🔄 看板已重置${scopeInfo}\n\n${kanban.getInjectContent()}`,
             },
           ],
         };
