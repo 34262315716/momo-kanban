@@ -81,21 +81,19 @@ export class KanbanDB {
   }
 
   private migrateToV2_1(): void {
-    try {
-      // 检查是否已经有 assigned_to 字段
-      const columns = this.db.pragma("table_info(tasks)") as any[];
-      const hasAssignedTo = columns.some((col: any) => col.name === "assigned_to");
-      
-      if (!hasAssignedTo) {
-        this.db.exec(`
-          ALTER TABLE tasks ADD COLUMN assigned_to TEXT;
-          ALTER TABLE tasks ADD COLUMN parent_session TEXT;
-          CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to);
-          CREATE INDEX IF NOT EXISTS idx_tasks_parent_session ON tasks(parent_session);
-        `);
-      }
-    } catch (error) {
-      // 忽略错误（字段可能已存在）
+    // 检查是否已经有 assigned_to 字段
+    const columns = this.db.pragma("table_info(tasks)") as any[];
+    const hasAssignedTo = columns.some((col: any) => col.name === "assigned_to");
+    
+    if (!hasAssignedTo) {
+      this.db.exec(`
+        ALTER TABLE tasks ADD COLUMN assigned_to TEXT;
+        ALTER TABLE tasks ADD COLUMN parent_session TEXT;
+      `);
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to);
+        CREATE INDEX IF NOT EXISTS idx_tasks_parent_session ON tasks(parent_session);
+      `);
     }
   }
 
