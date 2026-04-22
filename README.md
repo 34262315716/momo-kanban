@@ -13,6 +13,7 @@
 - ✨ **归档功能** — 完成的任务可归档，保持看板整洁
 - ✨ **自动迁移** — 首次启动自动从 V1 JSON 迁移到 V2 SQLite
 - ✨ **自动 scope 隔离** — 不同 Discord 频道自动隔离任务
+- ✨ **子代理部分可见** — 子代理只能看到自己的任务 + 分配给自己的任务
 
 ## 核心功能
 
@@ -87,6 +88,7 @@ npm install
 | `notes` | string | ❌ | 备注/详情 |
 | `blocked_by` | string[] | ❌ | 前置任务 ID 列表 |
 | `deadline` | number | ❌ | 截止时间（Unix 毫秒时间戳） |
+| `assigned_to` | string | ❌ | 分配给哪个子代理（session_key） |
 
 ```typescript
 // 基础用法
@@ -299,6 +301,45 @@ kanban_list({ tags: ["bug"], show_all: true })
 kanban_list({ priority: "urgent" })
 ```
 
+### 场景 4：子代理协作
+
+**主会话分配任务：**
+```typescript
+// 创建任务并分配给子代理
+kanban_add({
+  title: "开发用户认证模块",
+  assigned_to: "subagent-auth",
+  priority: "high",
+  notes: "子代理可以在自己的 scope 下分解这个任务"
+})
+```
+
+**子代理工作：**
+```typescript
+// 子代理 (session_key: subagent-auth) 看到分配的任务
+kanban_list({})  // 看到主会话分配的任务
+
+// 分解子任务（自动 scope: session:subagent-auth）
+kanban_add({ title: "设计数据库表" })
+kanban_add({ title: "实现登录 API" })
+kanban_add({ title: "实现注册 API" })
+kanban_add({ title: "写单元测试" })
+
+// 逐个完成子任务
+kanban_do({ task_id: "task_xxx_001" })
+kanban_done({ task_id: "task_xxx_001" })
+// ...
+
+// 所有子任务完成后，标记主任务为完成
+kanban_done({ task_id: "<主任务ID>" })
+```
+
+**主会话查看进度：**
+```typescript
+// 主会话可以看到所有任务（包括子代理的）
+kanban_list({ show_all: true })
+```
+
 ## 上下文注入效果
 
 每次对话开始时，上下文会注入类似这样的内容：
@@ -343,9 +384,30 @@ V2 新增自动 scope 隔离功能：
 
 - **Discord 频道 A** → scope: `chat:channel_id_a`
 - **Discord 频道 B** → scope: `chat:channel_id_b`
+- **子代理** → scope: `session:<session_key>`
 - **主会话** → scope: `main`
 
-不同频道的任务自动隔离，互不干扰。
+不同频道和子代理的任务自动隔离，互不干扰。
+
+## 子代理部分可见
+
+**权限规则：**
+- 子代理只能看到：
+  - 自己 scope 的任务
+  - 分配给自己的任务（`assigned_to`）
+- 主会话可以看到所有任务
+
+**工作流程：**
+1. 主会话创建任务并分配给子代理（`assigned_to: "subagent-xxx"`）
+2. 子代理看到分配的任务
+3. 子代理在自己的 scope 下分解子任务
+4. 子代理完成后标记主任务为 done
+5. 主会话看到完成状态
+
+**优势：**
+- 任务隔离，避免污染
+- 子代理可以自主分解任务
+- 主会话保持全局视角
 
 ## 数据迁移
 
@@ -387,6 +449,12 @@ extensions/momo-kanban/
 - OpenClaw Plugin SDK
 
 ## 版本历史
+
+### V2.1.0 (2026-04-22)
+- ✨ 子代理部分可见功能
+- ✨ 任务分配（assigned_to）
+- ✨ 子代理自动 scope 隔离
+- ✨ 权限过滤（子代理只看自己的 + 分配的）
 
 ### V2.0.0 (2026-04-22)
 - ✨ 全新 SQLite 架构
