@@ -10,8 +10,8 @@
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { Type } from "@sinclair/typebox";
-import { KanbanManagerV2 } from "./manager-v2";
-import { migrateFromJSON } from "./migrate";
+import { KanbanManagerV2 } from "./manager-v2.js";
+import { migrateFromJSON } from "./migrate.js";
 import os from "node:os";
 import fs from "node:fs";
 

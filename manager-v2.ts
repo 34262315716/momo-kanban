@@ -2,7 +2,7 @@
  * 看板管理器 V2 - 集成所有增强功能
  */
 
-import { KanbanDB, Task, TaskStatus, TaskPriority, Template } from "./db";
+import { KanbanDB, Task, TaskStatus, TaskPriority, Template } from "./db.js";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 export interface AddTaskOptions {
