@@ -1,20 +1,36 @@
-# 依赖
+# node_modules
 node_modules/
 
-# 数据文件（运行时生成）
-data/
+# SQLite 数据库
+*.db
+*.db-shm
+*.db-wal
 
-# 构建产物
-dist/
-build/
+# 备份文件
+*-backup.ts
+*-v1-backup.ts
 
 # 日志
 *.log
 
+# 编译输出
+dist/
+build/
+*.js
+*.js.map
+!scripts/*.js
+
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
-# 系统文件
+# OS
 .DS_Store
 Thumbs.db
+
+# 测试
+coverage/
+.nyc_output/

@@ -35,12 +35,29 @@
 
 ## 安装
 
-插件位于 `extensions/momo-kanban/`，OpenClaw 会自动加载。
+### 方式 1：从 GitHub 安装（推荐）
 
-如果需要重新安装依赖：
 ```bash
-cd extensions/momo-kanban
+cd ~/.openclaw/extensions
+git clone https://github.com/dichuxuanhuan/momo-kanban.git
+cd momo-kanban
 npm install
+```
+
+### 方式 2：手动安装
+
+1. 下载最新 release
+2. 解压到 `~/.openclaw/extensions/momo-kanban/`
+3. 安装依赖：
+```bash
+cd ~/.openclaw/extensions/momo-kanban
+npm install
+```
+
+### 重启 OpenClaw
+
+```bash
+openclaw gateway restart
 ```
 
 ## 配置
@@ -475,3 +492,43 @@ extensions/momo-kanban/
 ## 许可证
 
 MIT
+
+## 贡献
+
+欢迎贡献！请遵循以下流程：
+
+1. Fork 这个仓库
+2. 创建你的特性分支 (`git checkout -b feature/amazing-feature`)
+3. 提交你的修改 (`git commit -m 'feat: add amazing feature'`)
+4. 推送到分支 (`git push origin feature/amazing-feature`)
+5. 开启 Pull Request
+
+### 开发指南
+
+```bash
+# 克隆仓库
+git clone https://github.com/dichuxuanhuan/momo-kanban.git
+cd momo-kanban
+
+# 安装依赖
+npm install
+
+# 类型检查
+npx tsc --noEmit
+
+# 测试插件
+openclaw gateway restart
+```
+
+## 问题反馈
+
+遇到问题或有建议？请在 [GitHub Issues](https://github.com/dichuxuanhuan/momo-kanban/issues) 提出。
+
+## 作者
+
+张涤玄 ([@dichuxuanhuan](https://github.com/dichuxuanhuan))
+
+## 致谢
+
+- [OpenClaw](https://openclaw.ai) - 强大的 AI 助手框架
+- 所有贡献者和用户
