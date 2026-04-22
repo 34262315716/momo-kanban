@@ -47,6 +47,36 @@ interface KanbanConfig {
 }
 
 // ========================================
+// 技能触发追踪类型
+// ========================================
+
+interface ToolCallRecord {
+  toolName: string;
+  error?: string;
+  timestamp: number;
+}
+
+interface SkillTriggerState {
+  /** 当前 doing 任务的工具调用记录 */
+  toolCalls: ToolCallRecord[];
+  /** 错误模式计数 (errorKey -> count) */
+  errorPatterns: Record<string, number>;
+  /** 用户纠正检测标记 */
+  userCorrectionDetected: boolean;
+  /** 当前活跃的提醒（null = 无提醒） */
+  activeReminder: SkillReminder | null;
+  /** 已消除的提醒 ID 列表 */
+  dismissedReminders: string[];
+}
+
+interface SkillReminder {
+  id: string;
+  triggerReason: string;
+  triggerDetails: string[];
+  createdAt: number;
+}
+
+// ========================================
 // 常量
 // ========================================
 
@@ -326,6 +356,189 @@ class KanbanManager {
 }
 
 // ========================================
+// 技能创建触发追踪器
+// ========================================
+
+/** 用户纠正关键词 */
+const CORRECTION_KEYWORDS = [
+  "不对", "错了", "应该是", "不是这样", "搞错",
+  "重新", "不行", "换一种", "别这样", "不要这样",
+  "没听懂", "你理解错", "说的不是",
+];
+
+/** 技能创建提醒模板 */
+const SKILL_REMINDER_TEMPLATE = `
+[SKILL_CREATION_ALERT]
+⚠️ SKILL CREATION TRIGGER DETECTED
+
+Reason: {{reason}}
+Details:
+{{details}}
+
+ACTION REQUIRED:
+1. PAUSE current kanban task (do NOT mark it done yet)
+2. Create or update a skill to document the solution/pattern you just discovered
+   - Use the skill-creator skill or manually create in ~/.openclaw/skills/
+3. After the skill is written, dismiss this reminder with kanban_dismiss_reminder
+4. Then RESUME the kanban task
+
+Decision criteria (2 of 3 must be true to save):
+- Reusability: Can this workflow be directly reused next time?
+- Discoverability: Will you remember this in 2 months without a record?
+- Uniqueness: Is this a universal pattern, not just a one-off workaround?
+
+[End of Skill Creation Alert]
+`;
+
+class SkillTriggerTracker {
+  private state: SkillTriggerState;
+  private logger: { info: (msg: string) => void; warn: (msg: string) => void };
+
+  /** 触发阈值 */
+  private static readonly TOOL_CALL_THRESHOLD = 5;
+  private static readonly ERROR_REPEAT_THRESHOLD = 2;
+
+  constructor(logger: { info: (msg: string) => void; warn: (msg: string) => void }) {
+    this.logger = logger;
+    this.state = this.createFreshState();
+  }
+
+  private createFreshState(): SkillTriggerState {
+    return {
+      toolCalls: [],
+      errorPatterns: {},
+      userCorrectionDetected: false,
+      activeReminder: null,
+      dismissedReminders: [],
+    };
+  }
+
+  /** 当新任务开始时重置追踪状态 */
+  resetForNewTask(): void {
+    const dismissed = this.state.dismissedReminders;
+    this.state = this.createFreshState();
+    this.state.dismissedReminders = dismissed;
+  }
+
+  /** 记录工具调用 */
+  recordToolCall(toolName: string, error?: string): void {
+    this.state.toolCalls.push({
+      toolName,
+      error,
+      timestamp: Date.now(),
+    });
+
+    if (error) {
+      // 提取错误模式 key（工具名 + 错误类型）
+      const errorKey = `${toolName}:${this.extractErrorType(error)}`;
+      this.state.errorPatterns[errorKey] = (this.state.errorPatterns[errorKey] || 0) + 1;
+    }
+
+    this.checkTriggers();
+  }
+
+  /** 检测用户纠正 */
+  checkUserMessage(content: string): void {
+    const lowerContent = content.toLowerCase();
+    for (const keyword of CORRECTION_KEYWORDS) {
+      if (lowerContent.includes(keyword)) {
+        this.state.userCorrectionDetected = true;
+        this.logger.info(`[momo-kanban] 检测到用户纠正关键词: "${keyword}"`);
+        this.checkTriggers();
+        return;
+      }
+    }
+  }
+
+  /** 检查是否触发了技能创建条件 */
+  private checkTriggers(): void {
+    // 已经有活跃提醒就不重复触发
+    if (this.state.activeReminder) return;
+
+    const triggers: string[] = [];
+
+    // 条件1: 任务复杂度高（5+ 工具调用）且有错误
+    const hasErrors = this.state.toolCalls.some((tc) => tc.error);
+    if (this.state.toolCalls.length >= SkillTriggerTracker.TOOL_CALL_THRESHOLD && hasErrors) {
+      triggers.push(
+        `High complexity: ${this.state.toolCalls.length} tool calls with errors encountered`
+      );
+    }
+
+    // 条件4: 同类错误出现 2 次以上
+    for (const [pattern, count] of Object.entries(this.state.errorPatterns)) {
+      if (count >= SkillTriggerTracker.ERROR_REPEAT_THRESHOLD) {
+        triggers.push(
+          `Repeated error pattern: "${pattern}" occurred ${count} times`
+        );
+      }
+    }
+
+    // 条件3: 被用户纠正
+    if (this.state.userCorrectionDetected) {
+      triggers.push("User correction detected - possible knowledge gap");
+    }
+
+    if (triggers.length > 0) {
+      const reminderId = `reminder_${Date.now()}`;
+      this.state.activeReminder = {
+        id: reminderId,
+        triggerReason: triggers[0],
+        triggerDetails: triggers,
+        createdAt: Date.now(),
+      };
+      this.logger.warn(
+        `[momo-kanban] 技能创建触发! 原因: ${triggers.join("; ")}`
+      );
+    }
+  }
+
+  /** 提取错误类型（简化错误信息为模式 key） */
+  private extractErrorType(error: string): string {
+    // 取错误信息的前 50 个字符作为模式
+    return error.slice(0, 50).replace(/[\n\r]/g, " ").trim();
+  }
+
+  /** 获取当前活跃提醒（用于注入上下文） */
+  getActiveReminder(): string | null {
+    if (!this.state.activeReminder) return null;
+
+    return SKILL_REMINDER_TEMPLATE
+      .replace("{{reason}}", this.state.activeReminder.triggerReason)
+      .replace(
+        "{{details}}",
+        this.state.activeReminder.triggerDetails
+          .map((d) => `  - ${d}`)
+          .join("\n")
+      );
+  }
+
+  /** 消除当前提醒 */
+  dismissReminder(): string {
+    if (!this.state.activeReminder) {
+      return "No active reminder to dismiss.";
+    }
+    const id = this.state.activeReminder.id;
+    this.state.dismissedReminders.push(id);
+    this.state.activeReminder = null;
+    // 消除后重置纠正标记，避免立即重新触发
+    this.state.userCorrectionDetected = false;
+    return `Reminder ${id} dismissed. Resume your kanban tasks.`;
+  }
+
+  /** 获取追踪状态摘要（调试用） */
+  getStatusSummary(): string {
+    const lines: string[] = [];
+    lines.push(`Tool calls: ${this.state.toolCalls.length}`);
+    lines.push(`Errors: ${this.state.toolCalls.filter((tc) => tc.error).length}`);
+    lines.push(`Error patterns: ${JSON.stringify(this.state.errorPatterns)}`);
+    lines.push(`User correction: ${this.state.userCorrectionDetected}`);
+    lines.push(`Active reminder: ${this.state.activeReminder ? "YES" : "no"}`);
+    return lines.join("\n");
+  }
+}
+
+// ========================================
 // 插件定义
 // ========================================
 
@@ -340,6 +553,7 @@ const momoKanbanPlugin = {
   register(api: OpenClawPluginApi): void {
     const config = configSchema.parse(api.pluginConfig);
     const kanban = new KanbanManager(config.dataFile, config.maxTasks);
+    const tracker = new SkillTriggerTracker(api.logger);
 
     api.logger.info("[momo-kanban] 插件加载中...");
 
@@ -460,6 +674,9 @@ const momoKanbanPlugin = {
           };
         }
 
+        // 新任务开始，重置追踪器
+        tracker.resetForNewTask();
+
         return {
           content: [
             {
@@ -577,6 +794,7 @@ const momoKanbanPlugin = {
       parameters: Type.Object({}),
       async execute(_toolCallId) {
         kanban.resetBoard();
+        tracker.resetForNewTask();
         return {
           content: [
             {
@@ -589,24 +807,76 @@ const momoKanbanPlugin = {
     });
 
     // ========================================
-    // 注册 hooks：注入看板状态到上下文
+    // kanban_dismiss_reminder - 消除技能创建提醒
     // ========================================
+    api.registerTool({
+      name: "kanban_dismiss_reminder",
+      label: "消除提醒",
+      description: "消除当前的技能创建提醒。在写完技能文档后调用此工具，然后继续推进看板任务。",
+      parameters: Type.Object({}),
+      async execute(_toolCallId) {
+        const result = tracker.dismissReminder();
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `✅ ${result}`,
+            },
+          ],
+        };
+      },
+    });
+
+    // ========================================
+    // 注册 hooks
+    // ========================================
+
+    // Hook 1: 工具调用后——追踪工具调用次数和错误
+    api.registerHook(
+      "after_tool_call",
+      (event) => {
+        // 不追踪看板自己的工具调用
+        if (event.toolName.startsWith("kanban_")) return;
+
+        tracker.recordToolCall(event.toolName, event.error);
+      },
+      { name: "momo-kanban.tool-tracker", description: "追踪工具调用用于技能触发检测" }
+    );
+
+    // Hook 2: 收到消息——检测用户纠正
+    api.registerHook(
+      "message_received",
+      (event) => {
+        if (event.content) {
+          tracker.checkUserMessage(event.content);
+        }
+      },
+      { name: "momo-kanban.correction-detector", description: "检测用户纠正用于技能触发" }
+    );
+
+    // Hook 3: 提示词构建前——注入看板状态 + 技能创建提醒
     if (config.injectEnabled) {
       api.registerHook(
         "before_prompt_build",
         (_event, data) => {
           const boardContent = kanban.getInjectContent();
           const systemGuidance = kanban.getSystemPromptGuidance();
+          const skillReminder = tracker.getActiveReminder();
 
-          // 在系统消息之前注入看板状态
+          // 拼接注入内容
+          let injectContent = `${boardContent}\n\n${systemGuidance}`;
+          if (skillReminder) {
+            injectContent += `\n\n${skillReminder}`;
+          }
+
           data.promptEntries.unshift({
             role: "system",
-            content: `${boardContent}\n\n${systemGuidance}`,
+            content: injectContent,
           });
 
           return data;
         },
-        { name: "momo-kanban.inject", description: "注入看板状态到上下文" }
+        { name: "momo-kanban.inject", description: "注入看板状态和技能提醒到上下文" }
       );
       api.logger.info("[momo-kanban] 上下文注入已启用");
     }
