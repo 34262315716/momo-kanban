@@ -254,6 +254,30 @@ kanban_template_list({})
 kanban_dismiss_reminder({})
 ```
 
+### 可视化
+
+#### kanban_view
+生成可视化看板视图，展示任务分布和统计数据。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `scope` | string | ❌ | 指定 scope，不填则使用当前 scope |
+| `show_all` | boolean | ❌ | 为 true 时显示所有 scope |
+
+```typescript
+kanban_view({})                    // 查看当前 scope 看板
+kanban_view({ show_all: true })    // 查看全部 scope 看板
+```
+
+**功能特点：**
+- 📊 四列看板布局（待办/进行中/已完成/已归档）
+- 📈 实时统计数据（总任务/各状态数量/优先级分布）
+- 🎨 优先级颜色标识（🔴紧急/🟡高/⚪普通/🔵低）
+- 🏷️ 标签展示
+- 📝 备注预览
+- 🔒 依赖关系标记
+- 💫 响应式设计，支持移动端
+
 ## 使用示例
 
 ### 场景 1：开发一个网站
