@@ -39,7 +39,7 @@
 
 ```bash
 cd ~/.openclaw/extensions
-git clone https://github.com/dichuxuanhuan/momo-kanban.git
+git clone https://github.com/34262315716/momo-kanban.git
 cd momo-kanban
 npm install
 ```
@@ -507,7 +507,7 @@ MIT
 
 ```bash
 # 克隆仓库
-git clone https://github.com/dichuxuanhuan/momo-kanban.git
+git clone https://github.com/34262315716/momo-kanban.git
 cd momo-kanban
 
 # 安装依赖
@@ -522,11 +522,11 @@ openclaw gateway restart
 
 ## 问题反馈
 
-遇到问题或有建议？请在 [GitHub Issues](https://github.com/dichuxuanhuan/momo-kanban/issues) 提出。
+遇到问题或有建议？请在 [GitHub Issues](https://github.com/34262315716/momo-kanban/issues) 提出。
 
 ## 作者
 
-张涤玄 ([@dichuxuanhuan](https://github.com/dichuxuanhuan))
+张涤玄 ([@34262315716](https://github.com/34262315716))
 
 ## 致谢
 
