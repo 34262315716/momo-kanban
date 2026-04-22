@@ -26,6 +26,8 @@ export interface Task {
   remind_before_ms?: number;
   template_id?: string;
   tags?: string[];
+  assigned_to?: string;      // 分配给哪个子代理
+  parent_session?: string;   // 父会话
 }
 
 export interface Tag {
@@ -73,6 +75,28 @@ export class KanbanDB {
     const schemaPath = path.join(__dirname, "schema.sql");
     const schema = fs.readFileSync(schemaPath, "utf-8");
     this.db.exec(schema);
+    
+    // 迁移：添加 assigned_to 和 parent_session 字段
+    this.migrateToV2_1();
+  }
+
+  private migrateToV2_1(): void {
+    try {
+      // 检查是否已经有 assigned_to 字段
+      const columns = this.db.pragma("table_info(tasks)") as any[];
+      const hasAssignedTo = columns.some((col: any) => col.name === "assigned_to");
+      
+      if (!hasAssignedTo) {
+        this.db.exec(`
+          ALTER TABLE tasks ADD COLUMN assigned_to TEXT;
+          ALTER TABLE tasks ADD COLUMN parent_session TEXT;
+          CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to);
+          CREATE INDEX IF NOT EXISTS idx_tasks_parent_session ON tasks(parent_session);
+        `);
+      }
+    } catch (error) {
+      // 忽略错误（字段可能已存在）
+    }
   }
 
   // ========================================
@@ -86,8 +110,9 @@ export class KanbanDB {
     const stmt = this.db.prepare(`
       INSERT INTO tasks (
         id, title, status, scope, priority, notes,
-        created_at, blocked_by, deadline, remind_before_ms, template_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, blocked_by, deadline, remind_before_ms, template_id,
+        assigned_to, parent_session
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -101,7 +126,9 @@ export class KanbanDB {
       task.blocked_by ? JSON.stringify(task.blocked_by) : null,
       task.deadline || null,
       task.remind_before_ms || null,
-      task.template_id || null
+      task.template_id || null,
+      task.assigned_to || null,
+      task.parent_session || null
     );
 
     // 添加标签
@@ -367,6 +394,8 @@ export class KanbanDB {
       remind_before_ms: row.remind_before_ms,
       template_id: row.template_id,
       tags: tags.map((t) => t.name),
+      assigned_to: row.assigned_to,
+      parent_session: row.parent_session,
     };
   }
 

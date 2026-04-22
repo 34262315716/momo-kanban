@@ -307,7 +307,7 @@ const momoKanbanPlugin = {
     api.registerTool({
       name: "kanban_add",
       label: "看板添加任务",
-      description: "添加新任务到看板，支持优先级/标签/备注/依赖/截止时间",
+      description: "添加新任务到看板，支持优先级/标签/备注/依赖/截止时间/分配子代理",
       parameters: Type.Object({
         title: Type.String({ description: "任务标题" }),
         scope: Type.Optional(Type.String({ description: "任务 scope（默认自动从 chat_id 推断）" })),
@@ -321,6 +321,7 @@ const momoKanbanPlugin = {
         notes: Type.Optional(Type.String({ description: "备注/详情" })),
         blocked_by: Type.Optional(Type.Array(Type.String(), { description: "依赖的任务 ID 列表" })),
         deadline: Type.Optional(Type.Number({ description: "截止时间（Unix 毫秒时间戳）" })),
+        assigned_to: Type.Optional(Type.String({ description: "分配给哪个子代理（session_key）" })),
       }),
       async execute(_toolCallId, params) {
         const result = manager.addTask({
@@ -331,6 +332,7 @@ const momoKanbanPlugin = {
           notes: params.notes as string | undefined,
           blockedBy: params.blocked_by as string[] | undefined,
           deadline: params.deadline as number | undefined,
+          assignedTo: params.assigned_to as string | undefined,
         }, currentContext);
 
         if (!result.success) {
@@ -338,10 +340,11 @@ const momoKanbanPlugin = {
         }
 
         const depInfo = result.task?.blocked_by ? ` (依赖: ${result.task.blocked_by.join(", ")})` : "";
+        const assignInfo = result.task?.assigned_to ? ` → @${result.task.assigned_to}` : "";
         return {
           content: [{
             type: "text" as const,
-            text: `✅ 已添加: ${result.task?.title}${depInfo}\n\n${manager.getInjectContent(result.task?.scope, currentContext)}`,
+            text: `✅ 已添加: ${result.task?.title}${depInfo}${assignInfo}\n\n${manager.getInjectContent(result.task?.scope, currentContext)}`,
           }],
         };
       },

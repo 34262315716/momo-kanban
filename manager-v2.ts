@@ -14,6 +14,8 @@ export interface AddTaskOptions {
   blockedBy?: string[];
   deadline?: number;
   remindBeforeMs?: number;
+  assignedTo?: string;      // 分配给哪个子代理
+  parentSession?: string;   // 父会话
 }
 
 export interface ListTasksOptions {
@@ -48,10 +50,15 @@ export class KanbanManagerV2 {
 
   /**
    * 从上下文自动推断 scope
-   * 优先级：显式指定 > chat_id > 默认
+   * 优先级：显式指定 > session_key > chat_id > 默认
    */
   resolveScope(explicitScope?: string, context?: any): string {
     if (explicitScope) return explicitScope;
+
+    // 子代理：使用 session_key 作为 scope
+    if (context?.session_key && context.session_key !== "main") {
+      return `session:${context.session_key}`;
+    }
 
     // 从上下文提取 chat_id
     if (context?.chat_id) {
@@ -61,6 +68,42 @@ export class KanbanManagerV2 {
     return this.defaultScope;
   }
 
+  /**
+   * 获取当前 session_key
+   */
+  getSessionKey(context?: any): string {
+    return context?.session_key || "main";
+  }
+
+  /**
+   * 检查任务是否对当前会话可见
+   * 规则：
+   * 1. 自己 scope 的任务可见
+   * 2. 分配给自己的任务可见
+   * 3. 主会话可以看到所有任务
+   */
+  isTaskVisible(task: Task, context?: any): boolean {
+    const sessionKey = this.getSessionKey(context);
+    const currentScope = this.resolveScope(undefined, context);
+
+    // 主会话可以看到所有任务
+    if (sessionKey === "main") {
+      return true;
+    }
+
+    // 自己 scope 的任务
+    if (task.scope === currentScope) {
+      return true;
+    }
+
+    // 分配给自己的任务
+    if (task.assigned_to === sessionKey) {
+      return true;
+    }
+
+    return false;
+  }
+
   // ========================================
   // 任务操作
   // ========================================
@@ -68,6 +111,7 @@ export class KanbanManagerV2 {
   addTask(options: AddTaskOptions, context?: any): { success: boolean; task?: Task; error?: string } {
     try {
       const scope = this.resolveScope(options.scope, context);
+      const sessionKey = this.getSessionKey(context);
 
       // 验证依赖
       if (options.blockedBy && options.blockedBy.length > 0) {
@@ -89,6 +133,8 @@ export class KanbanManagerV2 {
         deadline: options.deadline,
         remind_before_ms: options.remindBeforeMs,
         tags: options.tags,
+        assigned_to: options.assignedTo,
+        parent_session: options.parentSession || (sessionKey !== "main" ? "main" : undefined),
       });
 
       return { success: true, task };
@@ -100,13 +146,21 @@ export class KanbanManagerV2 {
 
   listTasks(options: ListTasksOptions = {}, context?: any): Task[] {
     const scope = options.showAll ? undefined : this.resolveScope(options.scope, context);
+    const sessionKey = this.getSessionKey(context);
 
-    return this.db.getTasks({
+    let tasks = this.db.getTasks({
       scope,
       status: options.status,
       priority: options.priority,
       tags: options.tags,
     });
+
+    // 子代理权限过滤：只看到自己 scope + 分配给自己的任务
+    if (sessionKey !== "main") {
+      tasks = tasks.filter((task) => this.isTaskVisible(task, context));
+    }
+
+    return tasks;
   }
 
   doTask(taskId: string): { success: boolean; task?: Task; error?: string; blockedInfo?: string } {
@@ -330,7 +384,13 @@ export class KanbanManagerV2 {
 
   getInjectContent(scope?: string, context?: any): string {
     const resolvedScope = scope ? this.resolveScope(scope, context) : undefined;
-    const tasks = this.db.getTasks({ scope: resolvedScope });
+    const sessionKey = this.getSessionKey(context);
+    let tasks = this.db.getTasks({ scope: resolvedScope });
+
+    // 子代理权限过滤
+    if (sessionKey !== "main") {
+      tasks = tasks.filter((task) => this.isTaskVisible(task, context));
+    }
 
     if (tasks.length === 0) {
       return `[KANBAN_BOARD]\n${this.boardName} - No active tasks\n`;

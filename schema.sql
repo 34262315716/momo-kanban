@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS tasks (
   -- 模板来源
   template_id TEXT,
   
+  -- 子代理分配
+  assigned_to TEXT,        -- 分配给哪个子代理（session_key）
+  parent_session TEXT,     -- 父会话 session_key
+  
   -- 索引字段
   FOREIGN KEY (template_id) REFERENCES templates(id) ON DELETE SET NULL
 );
@@ -98,6 +102,8 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
 CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_deadline ON tasks(deadline);
+CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent_session ON tasks(parent_session);
 CREATE INDEX IF NOT EXISTS idx_task_tags_task_id ON task_tags(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_tags_tag_id ON task_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_template_tasks_template_id ON template_tasks(template_id);
