@@ -1005,8 +1005,7 @@ const momoKanbanPlugin = {
 
     // Hook: 上下文注入
     if (config.injectEnabled) {
-      api.registerHook("before_prompt_build", (_event, data) => {
-        const context = (_event as any)?.context;
+      api.registerHook("before_prompt_build", (_event, _data) => {
         const boardContent = manager.getInjectContent(undefined, currentContext);
         const skillReminder = tracker.getActiveReminder();
 
@@ -1015,12 +1014,9 @@ const momoKanbanPlugin = {
           injectContent += `\n\n${skillReminder}`;
         }
 
-        data.promptEntries.unshift({
-          role: "system",
-          content: injectContent,
-        });
-
-        return data;
+        return {
+          prependContext: injectContent,
+        };
       }, { name: "momo-kanban.inject" });
     }
 
