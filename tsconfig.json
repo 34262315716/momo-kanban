@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "paths": {
+      "openclaw/plugin-sdk/core": ["./types/openclaw.d.ts"]
+    }
+  },
+  "include": ["index.ts", "types/**/*.ts"]
+}
