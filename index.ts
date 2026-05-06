@@ -104,6 +104,7 @@ When you receive a complex task, use the kanban tools to break it down into smal
 - kanban_template_save - Save current tasks as a reusable template
 - kanban_template_apply - Apply a template to create task batch
 - kanban_template_list - List available templates
+- kanban_help - Show this complete usage guide
 
 ### Priority Levels:
 - urgent 🔴 - Critical, do immediately
@@ -657,6 +658,19 @@ const momoKanbanPlugin = {
       async execute() {
         const result = tracker.dismissReminder();
         return { content: [{ type: "text" as const, text: `✅ ${result}` }] };
+      },
+    });
+
+    // ========================================
+    // 工具：看板帮助
+    // ========================================
+    api.registerTool({
+      name: "kanban_help",
+      label: "看板帮助",
+      description: "输出看板的完整用法指南，包含所有工具、优先级、标签、scope 隔离、依赖管理等",
+      parameters: Type.Object({}),
+      async execute() {
+        return { content: [{ type: "text" as const, text: SYSTEM_PROMPT_GUIDANCE }] };
       },
     });
 

@@ -3,6 +3,40 @@
   "name": "陌陌看板",
   "description": "陌陌的任务看板，帮助分解任务、逐步执行、持续追踪",
   "version": "1.0.0",
+  "contracts": {
+    "tools": [
+      "kanban_add",
+      "kanban_list",
+      "kanban_do",
+      "kanban_done",
+      "kanban_update",
+      "kanban_delete",
+      "kanban_archive",
+      "kanban_reset",
+      "kanban_template_save",
+      "kanban_template_apply",
+      "kanban_template_list",
+      "kanban_dismiss_reminder",
+      "kanban_view",
+      "kanban_help"
+    ]
+  },
+  "toolMetadata": {
+    "kanban_add": { "optional": false },
+    "kanban_list": { "optional": false },
+    "kanban_do": { "optional": false },
+    "kanban_done": { "optional": false },
+    "kanban_update": { "optional": false },
+    "kanban_delete": { "optional": false },
+    "kanban_archive": { "optional": false },
+    "kanban_reset": { "optional": false },
+    "kanban_template_save": { "optional": false },
+    "kanban_template_apply": { "optional": false },
+    "kanban_template_list": { "optional": false },
+    "kanban_dismiss_reminder": { "optional": false },
+    "kanban_view": { "optional": false },
+    "kanban_help": { "optional": false }
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
