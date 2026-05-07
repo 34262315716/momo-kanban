@@ -28,6 +28,7 @@ export interface Task {
   tags?: string[];
   assigned_to?: string;      // 分配给哪个子代理
   parent_session?: string;   // 父会话
+  last_activity?: number;    // 最后活动时间戳（自动更新，供心跳检测用）
 }
 
 export interface Tag {
@@ -72,12 +73,14 @@ export class KanbanDB {
   }
 
   private initSchema(): void {
-    const schemaPath = path.join(__dirname, "schema.sql");
+    const schemaPath = path.join(import.meta.dirname, "schema.sql");
     const schema = fs.readFileSync(schemaPath, "utf-8");
     this.db.exec(schema);
     
     // 迁移：添加 assigned_to 和 parent_session 字段
     this.migrateToV2_1();
+    // 迁移：添加 last_activity 字段
+    this.migrateToV2_2();
   }
 
   private migrateToV2_1(): void {
@@ -92,6 +95,25 @@ export class KanbanDB {
           ALTER TABLE tasks ADD COLUMN parent_session TEXT;
           CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to);
           CREATE INDEX IF NOT EXISTS idx_tasks_parent_session ON tasks(parent_session);
+        `);
+      }
+    } catch (error) {
+      // 忽略错误（字段可能已存在）
+    }
+  }
+
+  private migrateToV2_2(): void {
+    try {
+      const columns = this.db.pragma("table_info(tasks)") as any[];
+      const hasLastActivity = columns.some((col: any) => col.name === "last_activity");
+      
+      if (!hasLastActivity) {
+        this.db.exec(`
+          ALTER TABLE tasks ADD COLUMN last_activity INTEGER;
+          CREATE INDEX IF NOT EXISTS idx_tasks_last_activity ON tasks(last_activity);
+          CREATE INDEX IF NOT EXISTS idx_tasks_status_last_activity ON tasks(status, last_activity);
+          -- 已有任务将 last_activity 设为 created_at
+          UPDATE tasks SET last_activity = created_at WHERE last_activity IS NULL;
         `);
       }
     } catch (error) {
@@ -130,6 +152,9 @@ export class KanbanDB {
       task.assigned_to || null,
       task.parent_session || null
     );
+
+    // 初始化 last_activity = created_at
+    this.db.prepare("UPDATE tasks SET last_activity = ? WHERE id = ?").run(created_at, id);
 
     // 添加标签
     if (task.tags && task.tags.length > 0) {
@@ -238,6 +263,10 @@ export class KanbanDB {
       fields.push("remind_before_ms = ?");
       params.push(updates.remind_before_ms);
     }
+
+    // 自动更新 last_activity
+    fields.push("last_activity = ?");
+    params.push(Date.now());
 
     if (fields.length === 0) return false;
 
@@ -396,6 +425,7 @@ export class KanbanDB {
       tags: tags.map((t) => t.name),
       assigned_to: row.assigned_to,
       parent_session: row.parent_session,
+      last_activity: row.last_activity,
     };
   }
 

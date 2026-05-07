@@ -257,6 +257,23 @@ export class KanbanManagerV2 {
     }
   }
 
+  /**
+   * 更新任务的 last_activity 时间戳（供心跳或手动 ping 使用）
+   * 任务每次被 agent 操作时自动更新，此方法用于手动标记"最后活跃"
+   */
+  touchTask(taskId: string): { success: boolean; error?: string } {
+    try {
+      const success = this.db.updateTask(taskId, {});
+      if (!success) {
+        return { success: false, error: `找不到任务: ${taskId}` };
+      }
+      return { success: true };
+    } catch (error: any) {
+      this.logger.warn(`[kanban] touch 任务失败: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
   updateTask(taskId: string, updates: Partial<Task>): { success: boolean; task?: Task; error?: string } {
     try {
       const success = this.db.updateTask(taskId, updates);
@@ -500,6 +517,18 @@ export class KanbanManagerV2 {
         parts.push("⏰已逾期");
       } else if (remaining < 24 * 60 * 60 * 1000) {
         parts.push("⏰今日截止");
+      }
+    }
+
+    // 停滞检测（doing 任务长时间无活动）
+    if (task.status === "doing" && task.last_activity) {
+      const idleMs = Date.now() - task.last_activity;
+      if (idleMs > 6 * 60 * 60 * 1000) {
+        parts.push("🔴停滞");
+      } else if (idleMs > 2 * 60 * 60 * 1000) {
+        parts.push("💤停滞");
+      } else if (idleMs > 30 * 60 * 1000) {
+        parts.push("⏸️闲置");
       }
     }
 

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   started_at INTEGER,
   completed_at INTEGER,
   archived_at INTEGER,
+  last_activity INTEGER, -- 最后活动时间（自动更新，供心跳检测用）
   
   -- 依赖关系（JSON array of task IDs）
   blocked_by TEXT,
@@ -104,6 +105,8 @@ CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_deadline ON tasks(deadline);
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_tasks_parent_session ON tasks(parent_session);
+CREATE INDEX IF NOT EXISTS idx_tasks_last_activity ON tasks(last_activity);
+CREATE INDEX IF NOT EXISTS idx_tasks_status_last_activity ON tasks(status, last_activity);
 CREATE INDEX IF NOT EXISTS idx_task_tags_task_id ON task_tags(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_tags_tag_id ON task_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_template_tasks_template_id ON template_tasks(template_id);

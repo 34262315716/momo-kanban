@@ -127,7 +127,8 @@ When you receive a complex task, use the kanban tools to break it down into smal
 - Filter tasks by tags using kanban_list
 
 ### Time Tracking:
-- created_at, started_at, completed_at are tracked automatically
+- created_at, started_at, completed_at, last_activity are tracked automatically
+- last_activity is updated on every task operation (for heartbeat/dead task detection)
 - Use deadline parameter for time-sensitive tasks
 
 ### Key Principles:
@@ -308,7 +309,7 @@ const momoKanbanPlugin = {
     api.registerTool({
       name: "kanban_add",
       label: "看板添加任务",
-      description: "添加新任务到看板，支持优先级/标签/备注/依赖/截止时间/分配子代理",
+      description: "添加新任务到看板，支持优先级/标签/备注/依赖/截止时间/分配子代理（last_activity 自动记录）",
       parameters: Type.Object({
         title: Type.String({ description: "任务标题" }),
         scope: Type.Optional(Type.String({ description: "任务 scope（默认自动从 chat_id 推断）" })),
@@ -400,7 +401,7 @@ const momoKanbanPlugin = {
     api.registerTool({
       name: "kanban_do",
       label: "看板开始任务",
-      description: "开始执行任务（标记为 doing）",
+      description: "开始执行任务（标记为 doing，自动更新 last_activity）",
       parameters: Type.Object({
         task_id: Type.String({ description: "任务 ID" }),
       }),
@@ -427,7 +428,7 @@ const momoKanbanPlugin = {
     api.registerTool({
       name: "kanban_done",
       label: "看板完成任务",
-      description: "标记任务为已完成",
+      description: "标记任务为已完成（自动更新 last_activity）",
       parameters: Type.Object({
         task_id: Type.String({ description: "任务 ID" }),
       }),
@@ -454,7 +455,7 @@ const momoKanbanPlugin = {
     api.registerTool({
       name: "kanban_update",
       label: "看板更新任务",
-      description: "更新任务的优先级/备注/标签/截止时间",
+      description: "更新任务的优先级/备注/标签/截止时间（自动更新 last_activity）",
       parameters: Type.Object({
         task_id: Type.String({ description: "任务 ID" }),
         priority: Type.Optional(Type.Union([
