@@ -35,3 +35,7 @@ Thumbs.db
 coverage/
 .nyc_output/
 .gitnexus
+
+# GitNexus generated config
+AGENTS.md
+CLAUDE.md
