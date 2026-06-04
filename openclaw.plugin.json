@@ -48,35 +48,35 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "dataFile": {
+      "dbPath": {
         "type": "string",
-        "default": "~/.openclaw/data/kanban.json",
-        "description": "看板数据存储文件路径"
+        "default": "~/.openclaw/data/kanban.db",
+        "description": "SQLite 数据库路径"
       },
       "injectEnabled": {
         "type": "boolean",
         "default": true,
         "description": "是否将看板状态注入到上下文"
       },
-      "maxTasks": {
-        "type": "number",
-        "default": 20,
-        "description": "最大任务数量"
+      "autoMigrate": {
+        "type": "boolean",
+        "default": true,
+        "description": "首次启动时自动从 JSON 迁移到 SQLite"
       }
     }
   },
   "uiHints": {
-    "dataFile": {
-      "label": "数据文件路径",
-      "placeholder": "~/.openclaw/data/kanban.json"
+    "dbPath": {
+      "label": "数据库路径",
+      "placeholder": "~/.openclaw/data/kanban.db"
     },
     "injectEnabled": {
       "label": "启用上下文注入",
       "help": "开启后看板状态会持续显示在对话上下文中"
     },
-    "maxTasks": {
-      "label": "最大任务数",
-      "help": "看板最多容纳的任务数量"
+    "autoMigrate": {
+      "label": "自动迁移",
+      "help": "首次启动时自动从旧 JSON 格式迁移到 SQLite"
     }
   }
 }
