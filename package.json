@@ -4,6 +4,13 @@
   "description": "陌陌的任务看板，帮助分解任务、逐步执行、持续追踪",
   "type": "module",
   "main": "index.ts",
+  "openclaw": {
+    "extensions": ["./index.ts"],
+    "compat": {
+      "pluginApi": ">=2026.2.17",
+      "minGatewayVersion": ">=2026.2.17"
+    }
+  },
   "dependencies": {
     "@sinclair/typebox": "^0.32.0",
     "@types/better-sqlite3": "^7.6.13",

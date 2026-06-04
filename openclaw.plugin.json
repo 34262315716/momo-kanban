@@ -3,6 +3,9 @@
   "name": "陌陌看板",
   "description": "陌陌的任务看板，帮助分解任务、逐步执行、持续追踪",
   "version": "1.0.0",
+  "activation": {
+    "onStartup": true
+  },
   "contracts": {
     "hooks": [
       "before_prompt_build",
