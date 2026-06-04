@@ -7,10 +7,17 @@
     "strict": false,
     "noImplicitAny": false,
     "skipLibCheck": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "paths": {
-      "openclaw/plugin-sdk/core": ["./src/types/openclaw.d.ts"]
+      "openclaw/plugin-sdk/core": [
+        "./src/types/openclaw.d.ts"
+      ]
     }
   },
-  "include": ["src/index.ts", "src/types/**/*.ts"]
+  "include": [
+    "index.ts",
+    "types/**/*.ts"
+  ]
 }
