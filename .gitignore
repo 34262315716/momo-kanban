@@ -39,3 +39,6 @@ coverage/
 # GitNexus generated config
 AGENTS.md
 CLAUDE.md
+
+# Claude skills (GitNexus may write these)
+.claude/

@@ -93,10 +93,12 @@ const SYSTEM_PROMPT_GUIDANCE = `
 When you receive a complex task, use the kanban tools to break it down into smaller steps and execute them systematically.
 
 ### Available Tools:
-- kanban_add - Add a new task with optional priority, tags, notes, dependencies, deadline
+- kanban_add - Add a new task with optional priority, tags, notes, dependencies, deadline, task_type, parent_id
+- kanban_plan_add - Quickly create a PLAN phase (high-level stage)
+- kanban_checklist - Batch create checklist subtasks under a PLAN
 - kanban_list - View tasks (filter by scope/status/priority/tags)
 - kanban_do - Start a task (checks dependencies first)
-- kanban_done - Complete a task (auto-reports unlocked downstream tasks)
+- kanban_done - Complete a task (auto-reports unlocked downstream tasks, detects PLAN completion)
 - kanban_update - Update task details (priority/notes/tags/deadline)
 - kanban_delete - Remove a task
 - kanban_archive - Archive completed tasks
@@ -138,6 +140,12 @@ When you receive a complex task, use the kanban tools to break it down into smal
 4. Use tags for cross-cutting concerns
 5. Use templates for recurring workflows
 
+### Two-Layer Task Structure:
+- PLAN (plan layer): High-level phases, 3-6 per project. Use kanban_plan_add.
+- TASK (checklist layer): Leaf tasks under a PLAN. Use kanban_checklist for batch creation.
+- Workflow: First create PLANs → then add tasks progressively as you learn more
+- Both layers support dynamic add/remove at any time
+
 The board state is continuously injected at the top of context.
 
 [End of Kanban Board Guidance]
@@ -173,6 +181,55 @@ Decision criteria (2 of 3 must be true to save):
 - Uniqueness: Is this a universal pattern, not just a one-off workaround?
 
 [End of Skill Creation Alert]
+`;
+
+// ========================================
+// 思考框架
+// ========================================
+const THINKING_FRAMEWORK = `
+[THINKING_FRAMEWORK]
+
+## 思考框架
+
+接收到用户消息后，按以下顺序逐条思考，禁止跳过。
+这是你内部的思维链指引，不输出给用户。
+
+### 0. 回顾上下文
+- 上一轮做了什么？（一句话）
+- 当前看板 doing 哪个任务？
+- 有没有卡住的、等待用户决策的问题？
+
+### 1. 理解意图
+- 把用户的话压缩成一句核心意思（去掉修饰词和情绪词）
+- 有没有没说出来的隐含信息？（情绪、紧迫度、前提假设）
+
+### 2. 任务归类
+- **连续任务**：和当前 doing 直接相关 → 继续推进
+- **新任务**：和当前无关 → 先评估规模和优先级
+- **打断/反馈**：用户质疑纠正、要求解释 → 先回应用户
+
+### 3. 自由思考
+做完以上结构化分析后，这里可以自由联想。就像没有框架一样——
+有什么新的角度？有没有被忽略的关键点？有没有更好的方式？
+有什么隐藏风险？有没有类似的经验可以参考？
+
+这一步是框架的"透风孔"，防止思维僵化。
+
+### 4. 工具决策
+- 纯思考/分析 → 不调工具，直接思考
+- 需要信息 → read / exec / lcm_grep
+- 需要修改 → edit / write / exec
+- 搜索/获取 → agent-reach / web_fetch
+- 多步工程 → 自判：<5分钟自己做，否则 sessions_spawn
+
+⚠️ 调工具前先想：有没有文档/README/skill 可以先看？
+
+### 5. 行动
+- 一次只做一件事
+- 同一个方法失败不超过 2 次，第 2 次失败必须换角度
+- 超过 5 分钟没有输出 → 先汇报状态，不沉默
+
+[End of Thinking Framework]
 `;
 
 interface SkillTriggerState {
@@ -309,16 +366,21 @@ const momoKanbanPlugin = {
     api.registerTool({
       name: "kanban_add",
       label: "看板添加任务",
-      description: "添加新任务到看板，支持优先级/标签/备注/依赖/截止时间/分配子代理（last_activity 自动记录）",
+      description: "添加新任务到看板，支持优先级/标签/备注/依赖/截止时间/分配子代理（last_activity 自动记录）。两层结构：task_type='plan' 建策略阶段，task_type='task'+parent_id 建叶子任务挂到 PLAN 下。简便方式：用 kanban_plan_add 建 PLAN，用 kanban_checklist 批量建叶子任务",
       parameters: Type.Object({
         title: Type.String({ description: "任务标题" }),
-        scope: Type.Optional(Type.String({ description: "任务 scope（默认自动从 chat_id 推断）" })),
+        scope: Type.Optional(Type.String({ description: "任务 scope（默认自动从 chat_id 推断，一般不需要手动填）" })),
         priority: Type.Optional(Type.Union([
           Type.Literal("urgent"),
           Type.Literal("high"),
           Type.Literal("normal"),
           Type.Literal("low"),
         ], { description: "优先级（默认 normal）" })),
+        task_type: Type.Optional(Type.Union([
+          Type.Literal("plan"),
+          Type.Literal("task"),
+        ], { description: "任务类型：'plan' 高阶段层 / 'task' 叶子任务（默认 'task'）" })),
+        parent_id: Type.Optional(Type.String({ description: "叶子任务归属的 PLAN 任务 ID" })),
         tags: Type.Optional(Type.Array(Type.String(), { description: "标签列表" })),
         notes: Type.Optional(Type.String({ description: "备注/详情" })),
         blocked_by: Type.Optional(Type.Array(Type.String(), { description: "依赖的任务 ID 列表" })),
@@ -330,6 +392,8 @@ const momoKanbanPlugin = {
           title: params.title as string,
           scope: params.scope as string | undefined,
           priority: params.priority as any,
+          taskType: (params.task_type as 'plan' | 'task' | undefined) || 'task',
+          parentId: params.parent_id as string | undefined,
           tags: params.tags as string[] | undefined,
           notes: params.notes as string | undefined,
           blockedBy: params.blocked_by as string[] | undefined,
@@ -353,6 +417,75 @@ const momoKanbanPlugin = {
     });
 
     // ========================================
+    // 工具：快速建 PLAN
+    // ========================================
+    api.registerTool({
+      name: "kanban_plan_add",
+      label: "看板创建 PLAN 阶段",
+      description: "快速创建一个 PLAN 阶段（高阶段层）",
+      parameters: Type.Object({
+        title: Type.String({ description: "阶段名称" }),
+        notes: Type.Optional(Type.String({ description: "阶段说明（可选）" })),
+        scope: Type.Optional(Type.String({ description: "scope（默认自动推断，一般不需要填）" })),
+      }),
+      async execute(_toolCallId, params) {
+        const result = manager.addTask({
+          title: params.title as string,
+          scope: params.scope as string | undefined,
+          notes: params.notes as string | undefined,
+          taskType: 'plan',
+        }, currentContext);
+
+        if (!result.success) {
+          return { content: [{ type: "text" as const, text: `❌ ${result.error}` }] };
+        }
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: `✅ PLAN 已创建: [${result.task?.id}] ${result.task?.title}`,
+          }],
+        };
+      },
+    });
+
+    // ========================================
+    // 工具：批量创建 checklist
+    // ========================================
+    api.registerTool({
+      name: "kanban_checklist",
+      label: "看板创建 checklist",
+      description: "批量创建 checklist 子任务关联到某个 PLAN",
+      parameters: Type.Object({
+        plan_id: Type.String({ description: "关联的 PLAN 任务 ID" }),
+        items: Type.Array(Type.String(), { description: "叶子任务标题列表（建议 3-5 个，写执行层的可验证步骤）" }),
+        scope: Type.Optional(Type.String({ description: "scope（默认自动推断，一般不需要填）" })),
+      }),
+      async execute(_toolCallId, params) {
+        const planId = params.plan_id as string;
+        const items = params.items as string[];
+
+        const plan = manager.getTask(planId);
+        if (!plan) {
+          return { content: [{ type: "text" as const, text: `❌ 找不到 PLAN: ${planId}` }] };
+        }
+
+        const result = manager.addChecklist(planId, items, currentContext);
+        if (!result.success) {
+          return { content: [{ type: "text" as const, text: `❌ ${result.error}` }] };
+        }
+
+        const taskLines = result.tasks?.map((t: any) => `  • [${t.id}] ${t.title}`).join("\n");
+        return {
+          content: [{
+            type: "text" as const,
+            text: `✅ 已在 [PLAN: ${plan.title}] 下创建 ${result.tasks?.length} 个子任务:\n${taskLines}`,
+          }],
+        };
+      },
+    });
+
+    // ========================================
     // 工具：列出任务
     // ========================================
     api.registerTool({
@@ -361,19 +494,19 @@ const momoKanbanPlugin = {
       description: "查看任务列表，支持按 scope/status/priority/tags 过滤",
       parameters: Type.Object({
         scope: Type.Optional(Type.String({ description: "指定 scope" })),
-        show_all: Type.Optional(Type.Boolean({ description: "显示所有 scope" })),
+        show_all: Type.Optional(Type.Boolean({ description: "true=查看所有频道的任务（只读，不能操作其他频道的任务）；默认只显示当前频道" })),
         status: Type.Optional(Type.Union([
           Type.Literal("todo"),
           Type.Literal("doing"),
           Type.Literal("done"),
           Type.Literal("archived"),
-        ])),
+        ], { description: "按状态过滤：todo=待做 / doing=进行中 / done=已完成 / archived=已归档" })),
         priority: Type.Optional(Type.Union([
           Type.Literal("urgent"),
           Type.Literal("high"),
           Type.Literal("normal"),
           Type.Literal("low"),
-        ])),
+        ], { description: "按优先级过滤：urgent🔴 / high🟡 / normal⚪ / low🔵" })),
         tags: Type.Optional(Type.Array(Type.String(), { description: "按标签过滤" })),
       }),
       async execute(_toolCallId, params) {
@@ -443,6 +576,9 @@ const momoKanbanPlugin = {
           const unlocked = result.unlockedTasks.map((t) => `  • [${t.id}] ${t.title}`).join("\n");
           msg += `\n\n🔓 已解锁:\n${unlocked}`;
         }
+        if (result.planCompleted) {
+          msg += `\n\n🎉 PLAN 全部完成: [${result.planCompleted.planId}] ${result.planCompleted.planTitle}`;
+        }
         msg += `\n\n${manager.getInjectContent(result.task?.scope)}`;
 
         return { content: [{ type: "text" as const, text: msg }] };
@@ -463,10 +599,10 @@ const momoKanbanPlugin = {
           Type.Literal("high"),
           Type.Literal("normal"),
           Type.Literal("low"),
-        ])),
-        notes: Type.Optional(Type.String({ description: "备注" })),
-        tags: Type.Optional(Type.Array(Type.String(), { description: "标签" })),
-        deadline: Type.Optional(Type.Number({ description: "截止时间" })),
+        ], { description: "优先级：urgent🔴紧急 / high🟡重要 / normal⚪普通 / low🔵可选" })),
+        notes: Type.Optional(Type.String({ description: "备注/详情" })),
+        tags: Type.Optional(Type.Array(Type.String(), { description: "标签列表" })),
+        deadline: Type.Optional(Type.Number({ description: "截止时间（Unix 毫秒时间戳）" })),
       }),
       async execute(_toolCallId, params) {
         const result = manager.updateTask(params.task_id as string, {
@@ -537,18 +673,19 @@ const momoKanbanPlugin = {
     api.registerTool({
       name: "kanban_reset",
       label: "看板重置",
-      description: "清空看板任务",
+      description: "清空看板任务（只能清空当前频道的任务，不能跨频道清理）",
       parameters: Type.Object({
-        scope: Type.Optional(Type.String({ description: "只清空指定 scope" })),
+        _: Type.Optional(Type.Boolean({ description: "保留参数，无实际作用" })),
       }),
-      async execute(_toolCallId, params) {
-        const result = manager.resetBoard(params.scope as string | undefined, currentContext);
+      async execute(_toolCallId, _params) {
+        // 强制使用当前 scope，禁止跨频道清理
+        const currentScope = manager.resolveScope(undefined, currentContext);
+        const result = manager.resetBoard(currentScope, currentContext);
         tracker.resetForNewTask();
-        const scopeInfo = params.scope ? ` (scope: ${params.scope}, 删除 ${result.removedCount} 个)` : "";
         return {
           content: [{
             type: "text" as const,
-            text: `🔄 看板已重置${scopeInfo}\n\n${manager.getInjectContent(undefined, currentContext)}`,
+            text: `🔄 看板已重置 (scope: ${currentScope}, 删除 ${result.removedCount} 个)\n\n${manager.getInjectContent(undefined, currentContext)}`,
           }],
         };
       },
@@ -697,23 +834,20 @@ const momoKanbanPlugin = {
 
     // Hook: 上下文注入
     if (config.injectEnabled) {
-      api.registerHook("before_prompt_build", (_event, data) => {
-        const context = (_event as any)?.context;
+      api.on("before_prompt_build", (_event, ctx) => {
+        api.logger.info("[momo-kanban] before_prompt_build hook fired!");
         const boardContent = manager.getInjectContent(undefined, currentContext);
         const skillReminder = tracker.getActiveReminder();
 
-        let injectContent = `${boardContent}\n\n${SYSTEM_PROMPT_GUIDANCE}`;
+        let injectContent = `${THINKING_FRAMEWORK}\n\n${boardContent}\n\n${SYSTEM_PROMPT_GUIDANCE}`;
         if (skillReminder) {
           injectContent += `\n\n${skillReminder}`;
         }
 
-        data.promptEntries.unshift({
-          role: "system",
-          content: injectContent,
-        });
-
-        return data;
-      }, { name: "momo-kanban.inject" });
+        return {
+          prependSystemContext: injectContent,
+        };
+      });
     }
 
     api.logger.info("[momo-kanban] V2 插件加载完成！");

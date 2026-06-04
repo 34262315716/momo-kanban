@@ -9,8 +9,8 @@
     "skipLibCheck": true,
     "types": ["node"],
     "paths": {
-      "openclaw/plugin-sdk/core": ["./types/openclaw.d.ts"]
+      "openclaw/plugin-sdk/core": ["./src/types/openclaw.d.ts"]
     }
   },
-  "include": ["index.ts", "types/**/*.ts"]
+  "include": ["src/index.ts", "src/types/**/*.ts"]
 }

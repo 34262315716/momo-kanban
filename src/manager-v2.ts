@@ -14,6 +14,8 @@ export interface AddTaskOptions {
   blockedBy?: string[];
   deadline?: number;
   remindBeforeMs?: number;
+  taskType?: 'plan' | 'task';
+  parentId?: string;
   assignedTo?: string;      // 分配给哪个子代理
   parentSession?: string;   // 父会话
 }
@@ -133,6 +135,8 @@ export class KanbanManagerV2 {
         deadline: options.deadline,
         remind_before_ms: options.remindBeforeMs,
         tags: options.tags,
+        task_type: options.taskType,
+        parent_id: options.parentId,
         assigned_to: options.assignedTo,
         parent_session: options.parentSession || (sessionKey !== "main" ? "main" : undefined),
       });
@@ -140,6 +144,48 @@ export class KanbanManagerV2 {
       return { success: true, task };
     } catch (error: any) {
       this.logger.warn(`[kanban] 添加任务失败: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * 获取单个任务
+   */
+  getTask(taskId: string): Task | null {
+    return this.db.getTask(taskId);
+  }
+
+  /**
+   * 批量添加叶子任务作为 checklist 关联到某个 PLAN
+   */
+  addChecklist(planId: string, items: string[], context?: any): { success: boolean; tasks?: Task[]; error?: string } {
+    try {
+      const plan = this.db.getTask(planId);
+      if (!plan) {
+        return { success: false, error: `找不到 PLAN: ${planId}` };
+      }
+      if (plan.task_type !== 'plan') {
+        return { success: false, error: `任务 [${planId}] 不是 PLAN 类型` };
+      }
+
+      const scope = this.resolveScope(undefined, context);
+      const createdTasks: Task[] = [];
+
+      for (const title of items) {
+        const task = this.db.addTask({
+          title,
+          status: "todo",
+          scope,
+          priority: "normal",
+          task_type: "task",
+          parent_id: planId,
+        });
+        createdTasks.push(task);
+      }
+
+      return { success: true, tasks: createdTasks };
+    } catch (error: any) {
+      this.logger.warn(`[kanban] 添加 checklist 失败: ${error.message}`);
       return { success: false, error: error.message };
     }
   }
@@ -156,7 +202,8 @@ export class KanbanManagerV2 {
     });
 
     // 子代理权限过滤：只看到自己 scope + 分配给自己的任务
-    if (sessionKey !== "main") {
+    // showAll=true 时为只读查看模式，允许跨 scope 查看，不过滤
+    if (sessionKey !== "main" && !options.showAll) {
       tasks = tasks.filter((task) => this.isTaskVisible(task, context));
     }
 
@@ -209,7 +256,7 @@ export class KanbanManagerV2 {
     }
   }
 
-  doneTask(taskId: string): { success: boolean; task?: Task; error?: string; unlockedTasks?: Task[] } {
+  doneTask(taskId: string): { success: boolean; task?: Task; error?: string; unlockedTasks?: Task[]; planCompleted?: { planId: string; planTitle: string } } {
     try {
       const task = this.db.getTask(taskId);
       if (!task) {
@@ -237,7 +284,22 @@ export class KanbanManagerV2 {
         }
       }
 
-      return { success: true, task: updatedTask, unlockedTasks };
+      // 检查 PLAN 是否完成（如果该任务是某个 PLAN 的叶子任务）
+      let planCompleted: { planId: string; planTitle: string } | undefined;
+      if (task.parent_id) {
+        const plan = this.db.getTask(task.parent_id);
+        if (plan) {
+          const siblings = allTasks.filter((t) => t.parent_id === plan.id);
+          const allDone = siblings.every((t) => t.status === "done");
+          if (allDone) {
+            // 自动把 PLAN 标记为 done
+            this.db.updateTask(plan.id, { status: "done", completed_at: Date.now() });
+            planCompleted = { planId: plan.id, planTitle: plan.title };
+          }
+        }
+      }
+
+      return { success: true, task: updatedTask, unlockedTasks, planCompleted };
     } catch (error: any) {
       this.logger.warn(`[kanban] 完成任务失败: ${error.message}`);
       return { success: false, error: error.message };
@@ -400,7 +462,8 @@ export class KanbanManagerV2 {
   // ========================================
 
   getInjectContent(scope?: string, context?: any): string {
-    const resolvedScope = scope ? this.resolveScope(scope, context) : undefined;
+    // 没有显式传 scope 时，fallback 到当前 context 的 scope，确保不泄漏其他频道的任务
+    const resolvedScope = this.resolveScope(scope, context);
     const sessionKey = this.getSessionKey(context);
     let tasks = this.db.getTasks({ scope: resolvedScope });
 
@@ -417,122 +480,80 @@ export class KanbanManagerV2 {
     lines.push(resolvedScope ? `${this.boardName} [scope: ${resolvedScope}]` : this.boardName);
     lines.push("");
 
-    // 按 scope 分组
-    const scopes = [...new Set(tasks.map((t) => t.scope))];
-    const multiScope = scopes.length > 1;
+    // 分离 PLAN、有归属的叶子任务、未归属的任务
+    const plans = tasks.filter((t) => t.task_type === 'plan');
+    const childIds = new Set(tasks.filter((t) => t.parent_id).map((t) => t.parent_id));
+    const orphans = tasks.filter((t) => !t.parent_id && t.task_type !== 'plan');
 
-    for (const s of scopes) {
-      const scopeTasks = tasks.filter((t) => t.scope === s);
-      if (multiScope) {
-        lines.push(`📁 Scope: ${s}`);
-        lines.push("");
-      }
+    // 按状态排序 PLAN：in_progress > pending > done
+    const sortedPlans = [...plans].sort((a, b) => {
+      const statusA = this.getInferredPlanStatus(a.id, tasks);
+      const statusB = this.getInferredPlanStatus(b.id, tasks);
+      const order: Record<string, number> = { in_progress: 0, pending: 1, done: 2 };
+      return (order[statusA] ?? 1) - (order[statusB] ?? 1);
+    });
 
-      // 按优先级和状态分组
-      const priorityOrder: TaskPriority[] = ["urgent", "high", "normal", "low"];
-      const statusGroups = {
-        doing: scopeTasks.filter((t) => t.status === "doing"),
-        todo: scopeTasks.filter((t) => t.status === "todo"),
-        done: scopeTasks.filter((t) => t.status === "done"),
-      };
+    // 渲染每个 PLAN
+    for (const plan of sortedPlans) {
+      const inferred = this.getInferredPlanStatus(plan.id, tasks);
+      const planIcon = inferred === 'in_progress' ? '📌' : '📋';
+      const statusLabel = inferred === 'in_progress' ? 'in_progress' : inferred === 'done' ? 'done' : 'pending';
 
-      // IN PROGRESS
-      if (statusGroups.doing.length > 0) {
-        lines.push("🔵 IN PROGRESS:");
-        for (const task of statusGroups.doing) {
-          lines.push(`   ${this.formatTask(task)}`);
-        }
-        lines.push("");
-      }
+      lines.push(`${planIcon} PLAN: ${plan.title} [${plan.id}] (${statusLabel})`);
 
-      // TODO (按优先级排序)
-      if (statusGroups.todo.length > 0) {
-        lines.push("📋 TODO:");
-        const sorted = statusGroups.todo.sort((a, b) => {
-          return priorityOrder.indexOf(a.priority) - priorityOrder.indexOf(b.priority);
-        });
-        for (const task of sorted) {
-          lines.push(`   ${this.formatTask(task)}`);
-        }
-        lines.push("");
-      }
-
-      // DONE
-      if (statusGroups.done.length > 0) {
-        lines.push(`✅ DONE (${statusGroups.done.length}):`);
-        for (const task of statusGroups.done.slice(0, 5)) {
-          lines.push(`   ${this.formatTask(task)}`);
-        }
-        if (statusGroups.done.length > 5) {
-          lines.push(`   ... and ${statusGroups.done.length - 5} more`);
+      // 渲染子任务
+      const children = tasks.filter((t) => t.parent_id === plan.id);
+      if (children.length === 0) {
+        lines.push(`   (无子任务)`);
+      } else {
+        for (const child of children) {
+          const emoji = this.getStatusEmoji(child);
+          lines.push(`   └─ ${emoji} ${child.title} [${child.id}]`);
         }
       }
+      lines.push("");
+    }
 
-      if (multiScope) lines.push("");
+    // 未归属任务
+    if (orphans.length > 0) {
+      lines.push("--- 未归属任务 ---");
+      for (const task of orphans) {
+        const emoji = this.getStatusEmoji(task);
+        lines.push(`${emoji} ${task.title} [${task.id}]`);
+      }
+      lines.push("");
     }
 
     return lines.join("\n");
   }
 
-  private formatTask(task: Task): string {
-    const parts: string[] = [];
+  /**
+   * 从子任务推断 PLAN 状态
+   */
+  private getInferredPlanStatus(planId: string, allTasks?: Task[]): string {
+    const tasks = allTasks || this.db.getTasks({});
+    const children = tasks.filter((t) => t.parent_id === planId);
+    if (children.length === 0) return 'pending';
 
-    // 优先级图标
-    const priorityIcons: Record<TaskPriority, string> = {
-      urgent: "🔴",
-      high: "🟡",
-      normal: "⚪",
-      low: "🔵",
-    };
-    if (task.priority !== "normal") {
-      parts.push(priorityIcons[task.priority]);
+    const hasDoing = children.some((t) => t.status === 'doing');
+    const allDone = children.every((t) => t.status === 'done');
+
+    if (hasDoing) return 'in_progress';
+    if (allDone) return 'done';
+    return 'pending';
+  }
+
+  /**
+   * 任务状态的emoji表示
+   */
+  private getStatusEmoji(task: Task): string {
+    switch (task.status) {
+      case 'done': return '✅';
+      case 'doing': return '🔵';
+      case 'todo': return '⚪';
+      case 'archived': return '📦';
+      default: return '⚪';
     }
-
-    // 任务 ID 和标题
-    parts.push(`[${task.id}] ${task.title}`);
-
-    // 标签
-    if (task.tags && task.tags.length > 0) {
-      parts.push(`#${task.tags.join(" #")}`);
-    }
-
-    // 依赖状态
-    if (task.blocked_by && task.blocked_by.length > 0) {
-      const unfinished = task.blocked_by.filter((depId) => {
-        const dep = this.db.getTask(depId);
-        return dep && dep.status !== "done";
-      });
-      if (unfinished.length > 0) {
-        parts.push(`🔒阻塞(${unfinished.length})`);
-      } else {
-        parts.push("✅解锁");
-      }
-    }
-
-    // 截止时间
-    if (task.deadline) {
-      const now = Date.now();
-      const remaining = task.deadline - now;
-      if (remaining < 0) {
-        parts.push("⏰已逾期");
-      } else if (remaining < 24 * 60 * 60 * 1000) {
-        parts.push("⏰今日截止");
-      }
-    }
-
-    // 停滞检测（doing 任务长时间无活动）
-    if (task.status === "doing" && task.last_activity) {
-      const idleMs = Date.now() - task.last_activity;
-      if (idleMs > 6 * 60 * 60 * 1000) {
-        parts.push("🔴停滞");
-      } else if (idleMs > 2 * 60 * 60 * 1000) {
-        parts.push("💤停滞");
-      } else if (idleMs > 30 * 60 * 1000) {
-        parts.push("⏸️闲置");
-      }
-    }
-
-    return parts.join(" ");
   }
 
   close(): void {

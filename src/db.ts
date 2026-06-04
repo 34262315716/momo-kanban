@@ -25,6 +25,8 @@ export interface Task {
   deadline?: number;
   remind_before_ms?: number;
   template_id?: string;
+  task_type?: 'plan' | 'task';
+  parent_id?: string;
   tags?: string[];
   assigned_to?: string;      // 分配给哪个子代理
   parent_session?: string;   // 父会话
@@ -81,6 +83,8 @@ export class KanbanDB {
     this.migrateToV2_1();
     // 迁移：添加 last_activity 字段
     this.migrateToV2_2();
+    // 迁移：添加 task_type 和 parent_id 字段
+    this.migrateToV2_3();
   }
 
   private migrateToV2_1(): void {
@@ -95,6 +99,24 @@ export class KanbanDB {
           ALTER TABLE tasks ADD COLUMN parent_session TEXT;
           CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to);
           CREATE INDEX IF NOT EXISTS idx_tasks_parent_session ON tasks(parent_session);
+        `);
+      }
+    } catch (error) {
+      // 忽略错误（字段可能已存在）
+    }
+  }
+
+  private migrateToV2_3(): void {
+    try {
+      const columns = this.db.pragma("table_info(tasks)") as any[];
+      const hasTaskType = columns.some((col: any) => col.name === "task_type");
+
+      if (!hasTaskType) {
+        this.db.exec(`
+          ALTER TABLE tasks ADD COLUMN task_type TEXT CHECK(task_type IN ('plan', 'task')) DEFAULT 'task';
+          ALTER TABLE tasks ADD COLUMN parent_id TEXT;
+          CREATE INDEX IF NOT EXISTS idx_tasks_task_type ON tasks(task_type);
+          CREATE INDEX IF NOT EXISTS idx_tasks_parent_id ON tasks(parent_id);
         `);
       }
     } catch (error) {
@@ -133,8 +155,9 @@ export class KanbanDB {
       INSERT INTO tasks (
         id, title, status, scope, priority, notes,
         created_at, blocked_by, deadline, remind_before_ms, template_id,
+        task_type, parent_id,
         assigned_to, parent_session
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -149,6 +172,8 @@ export class KanbanDB {
       task.deadline || null,
       task.remind_before_ms || null,
       task.template_id || null,
+      task.task_type || null,
+      task.parent_id || null,
       task.assigned_to || null,
       task.parent_session || null
     );
@@ -422,6 +447,8 @@ export class KanbanDB {
       deadline: row.deadline,
       remind_before_ms: row.remind_before_ms,
       template_id: row.template_id,
+      task_type: row.task_type,
+      parent_id: row.parent_id,
       tags: tags.map((t) => t.name),
       assigned_to: row.assigned_to,
       parent_session: row.parent_session,

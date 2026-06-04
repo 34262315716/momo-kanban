@@ -4,6 +4,11 @@
   "description": "陌陌的任务看板，帮助分解任务、逐步执行、持续追踪",
   "version": "1.0.0",
   "contracts": {
+    "hooks": [
+      "before_prompt_build",
+      "message_received",
+      "after_tool_call"
+    ],
     "tools": [
       "kanban_add",
       "kanban_list",
@@ -17,8 +22,9 @@
       "kanban_template_apply",
       "kanban_template_list",
       "kanban_dismiss_reminder",
-      "kanban_view",
-      "kanban_help"
+      "kanban_help",
+      "kanban_plan_add",
+      "kanban_checklist"
     ]
   },
   "toolMetadata": {
@@ -34,8 +40,9 @@
     "kanban_template_apply": { "optional": false },
     "kanban_template_list": { "optional": false },
     "kanban_dismiss_reminder": { "optional": false },
-    "kanban_view": { "optional": false },
-    "kanban_help": { "optional": false }
+    "kanban_help": { "optional": false },
+    "kanban_plan_add": { "optional": false },
+    "kanban_checklist": { "optional": false }
   },
   "configSchema": {
     "type": "object",

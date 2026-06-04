@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS tasks (
   -- 模板来源
   template_id TEXT,
   
+  -- 两层任务结构
+  task_type TEXT CHECK(task_type IN ('plan', 'task')) DEFAULT 'task',
+  parent_id TEXT,  -- 叶子任务归属的 PLAN 任务 ID
+  
   -- 子代理分配
   assigned_to TEXT,        -- 分配给哪个子代理（session_key）
   parent_session TEXT,     -- 父会话 session_key
@@ -106,6 +110,8 @@ CREATE INDEX IF NOT EXISTS idx_tasks_deadline ON tasks(deadline);
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_tasks_parent_session ON tasks(parent_session);
 CREATE INDEX IF NOT EXISTS idx_tasks_last_activity ON tasks(last_activity);
+CREATE INDEX IF NOT EXISTS idx_tasks_task_type ON tasks(task_type);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent_id ON tasks(parent_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status_last_activity ON tasks(status, last_activity);
 CREATE INDEX IF NOT EXISTS idx_task_tags_task_id ON task_tags(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_tags_tag_id ON task_tags(tag_id);
